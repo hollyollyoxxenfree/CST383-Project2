@@ -1,0 +1,195 @@
+---
+title: "Predicting Location in Drug Overdose Related Deaths"
+author: "Holly Stephens & Jonathan Cabrera"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Introduction
+
+We chose to use the Accidental Drug Related Deaths dataset for our final project, and because of how prolific news stories of the opioid crisis have become in recent years, we felt a natural propensity towards drug overdose deaths related to opioids. After some exploration, we decided we wanted to <u>predict the likelihood of an overdose death occurring in a major city</u>.
+
+
+#Data
+
+The Accidental Drug Related Deaths dataset is from a government site containing information about the accidental deaths associated with drug overdose in Connecticut from 2012 to 2018. It was collected by the Office of the Chief Medical Examiner and includes information such as the toxicity report, death certificate, and a scene investigation of each overdose death. It should be noted here that Connecticut is also the headquarters of Purdue Pharma L.P., a company considered by many to be one of the actuators behind the opioid crisis.
+```{r, echo=FALSE}
+# reading our dataset into a dataframe
+dat = read.csv("/Users/hollystephens/Downloads/Accidental_Drug_Related_Deaths_2012-2018.csv")
+```
+
+
+#Initial Data Exploration
+A first look at our dataset:
+```{r}
+# how large is our data?
+ncol(dat)
+nrow(dat)
+
+```
+
+```{r}
+# what types of attributes exist in our dataframe?
+unique(sapply(dat,class))
+```
+
+Exploring the demographic distribution:  
+```{r}
+mean(na.omit(dat$Age))
+summary(dat$Sex)
+summary(dat$Race)
+summary(dat$DeathCity)
+summary(dat$MannerofDeath)
+```
+
+```{r}
+# getting a visual
+par(mfrow=c(1,3))
+hist(na.omit(dat$Age), main="individuals by age", xlab="age", col="lightblue")
+plot(dat$Sex, main="individuals by sex", xlab="sex", col="lightblue")
+plot(dat$DeathCity, main="individuals by death city", xlab="death city", col="lightblue")
+```
+
+This gives us a more cohesive picture of the demographic background of a typical individual in our dataset: a white man in his early 40s.
+
+We can also observe that there are 5 cities around which the overdose deaths reported coalesce.
+
+#Data Cleaning and Preprocessing
+
+Looking at the size of unique values in the cause of death attribute, we can see that this is much too broad to use.
+```{r}
+length(unique(dat$COD))
+```
+To hone in on opioid involvement in a given overdose, let's instead focus on the substance attributes, which indicate whether a certain drug was detected in an individual by the Medical Examiner. We will consider an opioid to be any drug listed as an opiate or narcotic on the <a href="https://www.addictionsandrecovery.org/opioid-opiate-recovery.htm">Addictions and Recovery site</a>.  
+```{r}
+# adding an opioid involvement attribute to our dataframe, which will be set to a value of "Yes" if a value of "Y" is found in any of the following substance attributes
+dat$opioidInvolved = factor(ifelse(
+  (dat$Heroin == "Y" | dat$Fentanyl == "Y" | dat$FentanylAnalogue == "Y" | dat$Oxycodone == "Y" | dat$Oxymorphone == "Y" | dat$Hydrocodone == "Y"| dat$Methadone == "Y" | dat$Tramad == "Y" | dat$Morphine_NotHeroin == "Y" | dat$Hydromorphone == "Y"),
+  "Yes", "No"))
+```
+A breakdown of how many enteries in our data involded some kind of opioid:
+```{r}
+summary(dat$opioidInvolved)
+```
+As we can see, opioids played a role in nearly 90% of the overdose deaths reported in our dataset. Because this percentage is so high, it doesn't seem like it would be valuable to use this as our target variable.
+
+Since white is the most frequently occurring race in our set of opioid overdose deaths, let's add a binary value for this attribute as well.
+```{r}
+# adding an opioid isWhite attribute to our dataframe, which will be set to a value of "Yes" if a value of "White" is found in the race attribute
+dat$isWhite = factor(ifelse(
+  (dat$Race == "White"),"Yes", "No"))
+```
+
+We saw earlier in our data exploration that there were 7 enteries missing a binary sex value, the majority of which had a blank value for the attribute. Looking at the other attribute values in those rows, we can see much of the other information is blank as well.
+```{r}
+# applying a sum of the other blank columns to the rows that had a undetermined sex attribute 
+apply(dat[dat$Sex != 'Male' & dat$Sex != 'Female',],2,function(x) sum(x == ''))
+
+```
+
+
+#Data Exploration and Visualization
+
+Diving deeper into our dataset, we wanted to continue driving at demographics predicting the nature of overdose deaths.
+```{r}
+# a dataframe containing only the rows with opioid involvement
+datOp = dat[dat$opioidInvolved == "Yes",]
+
+# for later comparison, a datafram containing only the rows of overdoses with no opioid involvement
+datNOp = dat[dat$opioidInvolved == "No",]
+```
+
+What is the most frequently occurring manner of death of opioid related overdoses? Does is differ from non opioid rlated deaths?
+```{r}
+# getting a count of opioid overdose deaths by month of year
+par(mfrow=c(1,2))
+plot(datOp$MannerofDeath, main="manner of death opioids", xlab="MOD", col="lightblue")
+plot(datNOp$MannerofDeath, main="manner of death no opioids", xlab="MOD", col="lightblue")
+```
+
+We can see no difference between these subsets of our data- nearly all enteries in our dataset are accidental overdoses.
+
+Are there any spikes in opioid overdoses depending on the time of year?
+```{r}
+# getting a count of opioid overdose deaths by month of year
+datOp["Month"] = apply(datOp["Date"], 1, function(x) substr(x, 1, 2))
+table(datOp$Month)
+```
+We can see the number of opioid related deaths in each month is distributed rather evenly, with a slight increase in the later months of a given year. 
+
+
+We saw previously that our typical overdosee was a middle aged white man. Here we explore other possible correlations, such as location. A number of our overdose deaths occurred in large cities- there is a clear cut off point after about the top 6 cities, where the deathcount drops below half of the maximum.
+```{r}
+topCities = c("HARTFORD", "NEW HAVEN","WATERBURY", "BRIDGEPORT", "NEW BRITAIN")
+dat$MajorCity = factor(ifelse(dat$DeathCity %in% topCities,
+ "Yes", "No"))
+summary(dat$MajorCity)
+```
+
+We can see here over 60% of our opioid related deaths occurred in these top 5 cities. This seems like a more interesting candidate for our target variable.
+
+### Building a classification tree
+
+Our target variable is the MajorCity attribute we created in the previous section, which specifies whether or not an overdose death occurred in one of the cities with the highest death tolls. Our approach of using a classification tree is to show us what other attributes might influence this outcome. We will start constructing our classification tree by creating training and test data sets. The objective is to find predictors that minimize the our classification errors, and the functions we'll use to do this will help us in determining what those predictors are.
+```{r}
+library(rpart)
+library(rpart.plot)
+library(maptree)
+
+# for split_data function
+source("https://raw.githubusercontent.com/grbruns/cst383/master/lin-regr-util.R")
+
+set.seed(123)
+
+splits = split_data(dat, frac=c(3,1))
+tr_dat = splits[[1]]
+te_dat = splits[[2]]
+```
+
+Here we are using Age, MannerofDeath, Sex, and isWHite as our predictors. We determined these to be the most useful classifiers in our dataset because all other factor attributes have far too many levels. The idea of using the classification tree is that it will aid us in discerning which attributes are most relevent to predicting the location of an overdose death.
+```{r}
+# building our tree with the training data
+tr_fit = rpart(MajorCity ~  Age  + MannerofDeath + isWhite + Sex , data=tr_dat, method="class")
+prp(tr_fit, extra=106, varlen=-10,
+ main="classification tree for location of overdose",
+ box.col=c("palegreen", "pink")[tr_fit$frame$yval])
+```
+
+This is an unexpected result: even though white men are the predominant race of the drug overdoses reported in our dataset, they are not the majority race overdoses in our top cities.
+
+```{r}
+# examining our fitted tree
+summary(tr_fit)
+```
+
+### Classifying test data
+
+We now run our classification tree on our test data
+```{r}
+# building our tree
+te_fit = rpart(MajorCity ~  Age  + MannerofDeath + isWhite + Sex , data=te_dat, method="class")
+prp(te_fit, extra=106, varlen=-10,
+ main="classification tree for for location of overdose",
+ box.col=c("palegreen", "pink")[te_fit$frame$yval])
+```
+
+Interestingly enough, we see age appear in the tree run on our test data where it did not for our training data. It would seem that race and age are the best predictors of determing the location of an overdose death. And our typical individual overdosing in our locations of interest is a non white person under the age of 29.
+
+### Assessing the model
+
+```{r}
+#creating our confusion matrix
+predicted = predict(tr_fit, te_dat, type="class")
+actual = te_dat$MajorCity
+conf_mtx = table(predicted, actual)
+conf_mtx
+mean(actual == predicted)
+```
+
+
+#Conclusions
+
+We learned that white men in their 40's are the most likely overdosees. Additionaly, we saw that dense city populations correlated to higher concentrations opioid related overdose deaths. Contrary to these initial findings, however, we found that the most likely race to overdose is <i>not</i> more likely to overdose in the most likely locations of overdose.
